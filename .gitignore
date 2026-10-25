@@ -1,0 +1,22 @@
+# Data is downloaded by scripts/download_data.py, never committed
+data/raw/
+data/processed/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ipynb_checkpoints/
+
+# Secrets and local config
+.env
+
+# MLflow local artifacts
+mlruns/
+mlartifacts/
+*.db
+
+# Test artifacts
+.coverage
+.pytest_cache/
+htmlcov/

@@ -1,0 +1,4 @@
+# Normalize line endings so checksums, Docker builds, and CI behave the same on Windows and Linux
+* text=auto eol=lf
+*.png binary
+*.ipynb text eol=lf
