@@ -30,3 +30,13 @@ SETTING_COLUMNS = [f"op{i}" for i in range(1, N_SETTINGS + 1)]
 SENSOR_COLUMNS = [f"s{i}" for i in range(1, N_SENSORS + 1)]
 ID_COLUMNS = ["unit", "cycle"]
 COLUMNS = ID_COLUMNS + SETTING_COLUMNS + SENSOR_COLUMNS
+TARGET_COLUMN = "rul"
+
+# Piecewise-linear target: RUL is clipped at this value (None disables the cap).
+# The EDA shows sensors carry almost no signal while RUL > ~125, and 125 is the
+# most common value in the C-MAPSS literature, which keeps results comparable.
+RUL_CAP: int | None = 125
+
+# Validation: GroupKFold over engines, fixed seed for reproducible folds.
+N_FOLDS = 5
+SEED = 42
