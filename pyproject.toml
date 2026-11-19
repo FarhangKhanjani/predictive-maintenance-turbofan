@@ -11,10 +11,12 @@ dependencies = [
     "numpy>=2.1",
     "pandas>=2.2",
     "scikit-learn>=1.6",
+    "xgboost>=2.1",
 ]
 
 [project.scripts]
 rul-data = "rul.data:main"
+rul-train = "rul.train:main"
 
 [dependency-groups]
 dev = [
@@ -27,9 +29,13 @@ notebooks = [
     "jupyter>=1.1",
     "matplotlib>=3.9",
 ]
+# Training-only tools, kept out of the serving image
+train = [
+    "optuna>=4.0",
+]
 
 [tool.uv]
-default-groups = ["dev", "notebooks"]
+default-groups = ["dev", "notebooks", "train"]
 
 [build-system]
 requires = ["hatchling"]

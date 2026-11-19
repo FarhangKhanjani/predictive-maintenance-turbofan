@@ -20,3 +20,6 @@ mlartifacts/
 .coverage
 .pytest_cache/
 htmlcov/
+
+# Experiment run logs (results are kept as JSON)
+reports/*.log
