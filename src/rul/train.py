@@ -12,6 +12,9 @@ Command line:
     uv run rul-train tune --trials 30   # Optuna search for XGBoost (CV only)
     uv run rul-train benchmark          # baselines vs XGBoost, CV and test
     uv run rul-train ablate             # feature, cap, and window ablations
+    uv run rul-train promote            # register best benchmark run as @champion
+
+Runs are logged to MLflow unless `--no-track` is given (see rul.tracking).
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import argparse
 import json
 import sys
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -39,6 +43,7 @@ from rul.splits import engine_folds
 
 REPORTS_DIR = config.PROJECT_ROOT / "reports"
 BEST_PARAMS_FILE = REPORTS_DIR / "best_params.json"
+TRIALS_FILE = REPORTS_DIR / "tuning_trials.csv"
 LATE_LIFE = 125  # "late life" evaluation region: true RUL <= this value
 
 
@@ -103,14 +108,20 @@ def cross_validate(model: Any, folds: list[Fold]) -> dict[str, float]:
     return result
 
 
+def last_cycle_predictions(
+    pipeline: Pipeline, test_raw: pd.DataFrame, true_rul: pd.Series
+) -> tuple[np.ndarray, np.ndarray]:
+    """True and predicted RUL at the last observed cycle of each test engine (sorted by unit)."""
+    pred = pd.Series(pipeline.predict(test_raw), index=test_raw.index)
+    last_rows = test_raw.groupby("unit")["cycle"].idxmax().sort_index()
+    return true_rul.loc[last_rows.index].to_numpy(), pred.loc[last_rows.to_numpy()].to_numpy()
+
+
 def evaluate_on_test(
     pipeline: Pipeline, test_raw: pd.DataFrame, true_rul: pd.Series
 ) -> dict[str, float]:
     """Score a fitted pipeline on the last cycle of every official test engine."""
-    pred = pd.Series(pipeline.predict(test_raw), index=test_raw.index)
-    last_rows = test_raw.groupby("unit")["cycle"].idxmax().sort_index()
-    pred_last = pred.loc[last_rows.to_numpy()].to_numpy()
-    truth = true_rul.loc[last_rows.index].to_numpy()
+    truth, pred_last = last_cycle_predictions(pipeline, test_raw, true_rul)
     return {
         "test_rmse": rmse(truth, pred_last),
         "test_mae": mae(truth, pred_last),
@@ -166,7 +177,7 @@ def tune_xgboost(folds: list[Fold], n_trials: int, seed: int = config.SEED) -> d
     study.optimize(objective, n_trials=n_trials, callbacks=[report], show_progress_bar=False)
     print(f"Tuning took {time.perf_counter() - start:.0f}s", flush=True)
     REPORTS_DIR.mkdir(exist_ok=True)
-    study.trials_dataframe().to_csv(REPORTS_DIR / "tuning_trials.csv", index=False)
+    study.trials_dataframe().to_csv(TRIALS_FILE, index=False)
     return {**study.best_params, "_cv_rmse": study.best_value, "_n_trials": n_trials}
 
 
@@ -176,6 +187,14 @@ def load_best_params() -> dict[str, Any] | None:
         return None
     stored = json.loads(BEST_PARAMS_FILE.read_text())
     return {k: v for k, v in stored.items() if not k.startswith("_")}
+
+
+@dataclass(frozen=True)
+class Tracking:
+    """Where to log experiment runs (``None`` in place of this means no tracking)."""
+
+    subset: str
+    kind: str
 
 
 def run_experiment(
@@ -188,18 +207,41 @@ def run_experiment(
     true_rul: pd.Series,
     feature_config: FeatureConfig | None = None,
     cap: int | None = config.RUL_CAP,
+    track: Tracking | None = None,
 ) -> dict[str, Any]:
-    """Cross-validate, then fit on all training engines and score the test set once."""
+    """Cross-validate, then fit on all training engines and score the test set once.
+
+    With ``track`` set, the run is also logged to MLflow (nested under the
+    current parent run) together with the fitted pipeline.
+    """
     print(f"  {label} ...", flush=True)
     row: dict[str, Any] = {"experiment": label, "model": name}
     row |= cross_validate(make_model(name, params), folds)
     pipeline = fit_final(name, params, train_raw, feature_config, cap)
     row |= evaluate_on_test(pipeline, test_raw, true_rul)
     row["n_features"] = len(pipeline.named_steps["features"].get_feature_names_out())
+    if track is not None:
+        from rul import tracking  # training-only dependency, imported lazily
+
+        truth, pred = last_cycle_predictions(pipeline, test_raw, true_rul)
+        example = test_raw[test_raw["unit"] == test_raw["unit"].min()][list(config.COLUMNS)].head(5)
+        row["run_id"] = tracking.log_experiment(
+            label, name, params, feature_config, cap, track.subset, row,
+            pipeline, example, truth, pred, kind=track.kind,
+        )  # fmt: skip
     return row
 
 
-def benchmark(subset: str = "FD001") -> pd.DataFrame:
+def _parent_run(subset: str, kind: str, track: bool) -> AbstractContextManager[Any]:
+    """MLflow parent run grouping one command's runs, or a no-op without tracking."""
+    if not track:
+        return nullcontext()
+    from rul import tracking  # training-only dependency, imported lazily
+
+    return tracking.parent_run(subset, kind)
+
+
+def benchmark(subset: str = "FD001", track: bool = True) -> pd.DataFrame:
     """Baselines vs XGBoost (default and tuned) on identical folds and metrics."""
     train_raw, test_raw = load_split(subset, "train"), load_split(subset, "test")
     true_rul = load_test_rul(subset)
@@ -213,11 +255,16 @@ def benchmark(subset: str = "FD001") -> pd.DataFrame:
     ]
     if tuned:
         plan.append(("XGBoost (tuned)", "xgboost", tuned))
-    rows = [run_experiment(lbl, n, p, folds, train_raw, test_raw, true_rul) for lbl, n, p in plan]
+    tracking = Tracking(subset, "benchmark") if track else None
+    with _parent_run(subset, "benchmark", track):
+        rows = [
+            run_experiment(lbl, n, p, folds, train_raw, test_raw, true_rul, track=tracking)
+            for lbl, n, p in plan
+        ]
     return pd.DataFrame(rows)
 
 
-def ablate(subset: str = "FD001") -> pd.DataFrame:
+def ablate(subset: str = "FD001", track: bool = True) -> pd.DataFrame:
     """Change one thing at a time with the tuned (or default) XGBoost parameters."""
     train_raw, test_raw = load_split(subset, "train"), load_split(subset, "test")
     true_rul = load_test_rul(subset)
@@ -243,12 +290,15 @@ def ablate(subset: str = "FD001") -> pd.DataFrame:
         ),
     ]
     rows = []
-    for label, feature_config, cap in variants:
-        folds = make_folds(train_raw, feature_config, cap)
-        row = run_experiment(
-            label, "xgboost", params, folds, train_raw, test_raw, true_rul, feature_config, cap
-        )
-        rows.append(row | {"lookback": feature_config.lookback, "cap": cap})
+    tracking = Tracking(subset, "ablation") if track else None
+    with _parent_run(subset, "ablation", track):
+        for label, feature_config, cap in variants:
+            folds = make_folds(train_raw, feature_config, cap)
+            row = run_experiment(
+                label, "xgboost", params, folds, train_raw, test_raw, true_rul,
+                feature_config, cap, track=tracking,
+            )  # fmt: skip
+            rows.append(row | {"lookback": feature_config.lookback, "cap": cap})
     return pd.DataFrame(rows)
 
 
@@ -274,10 +324,12 @@ def save(df: pd.DataFrame, stem: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     """Entry point for ``uv run rul-train``."""
     parser = argparse.ArgumentParser(description="RUL experiments")
-    parser.add_argument("command", choices=["tune", "benchmark", "ablate"])
+    parser.add_argument("command", choices=["tune", "log-tuning", "benchmark", "ablate", "promote"])
     parser.add_argument("--subset", default="FD001", choices=config.SUBSETS)
     parser.add_argument("--trials", type=int, default=30, help="Optuna trials for 'tune'")
+    parser.add_argument("--no-track", action="store_true", help="skip MLflow logging")
     args = parser.parse_args(argv)
+    track = not args.no_track
 
     if args.command == "tune":
         train_raw = load_split(args.subset, "train")
@@ -285,9 +337,23 @@ def main(argv: list[str] | None = None) -> int:
         REPORTS_DIR.mkdir(exist_ok=True)
         BEST_PARAMS_FILE.write_text(json.dumps(best, indent=2))
         print(json.dumps(best, indent=2))
+        if not track:
+            return 0
+    if args.command in ("tune", "log-tuning"):
+        from rul import tracking
+
+        run_id = tracking.log_tuning(args.subset, BEST_PARAMS_FILE, TRIALS_FILE)
+        print(f"Logged tuning run {run_id}")
+        return 0
+    if args.command == "promote":
+        from rul import tracking
+
+        for alias, version in tracking.promote(args.subset).items():
+            print(f"{tracking.registered_model_name(args.subset)}@{alias} -> version {version}")
         return 0
 
-    df = benchmark(args.subset) if args.command == "benchmark" else ablate(args.subset)
+    run = benchmark if args.command == "benchmark" else ablate
+    df = run(args.subset, track=track)
     path = save(df, args.command)
     cols = ["experiment", "cv_rmse", "cv_rmse_std", "cv_rmse_late", "test_rmse", "test_nasa"]
     print(to_markdown(df, cols))

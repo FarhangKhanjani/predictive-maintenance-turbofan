@@ -6,34 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.base import clone
+from synthetic import FAST, FAST_PARAMS, degrading_fleet, truncated_fleet
 
-from rul import config
-from rul.features import FeatureConfig
 from rul.models import MODEL_NAMES, make_model, make_pipeline_for
 from rul.train import cross_validate, evaluate_on_test, fit_final, make_folds
-
-FAST = FeatureConfig(windows=(3,), ewm_spans=(), slope_windows=(3,), lookback=3)
-FAST_PARAMS = {
-    "random_forest": {"n_estimators": 10},
-    "xgboost": {"n_estimators": 20},
-}
-
-
-def degrading_fleet(n_engines: int, seed: int = 0, truncate: bool = False) -> pd.DataFrame:
-    """Engines whose sensor s2 drifts upwards towards failure, plus noise sensors."""
-    rng = np.random.default_rng(seed)
-    frames = []
-    for unit in range(1, n_engines + 1):
-        life = int(rng.integers(40, 80))
-        if truncate:
-            life = int(rng.integers(15, life))
-        cycle = np.arange(1, life + 1)
-        df = pd.DataFrame(rng.normal(size=(life, config.N_SENSORS)), columns=config.SENSOR_COLUMNS)
-        df["s2"] = np.exp(cycle / 20) + rng.normal(scale=0.1, size=life)
-        df.insert(0, "cycle", cycle)
-        df.insert(0, "unit", unit)
-        frames.append(df)
-    return pd.concat(frames, ignore_index=True)
 
 
 @pytest.fixture(scope="module")
@@ -86,8 +62,7 @@ def test_signal_beats_the_mean_baseline(train_raw: pd.DataFrame) -> None:
 
 def test_final_pipeline_scores_last_cycle_of_each_test_engine(train_raw: pd.DataFrame) -> None:
     pipeline = fit_final("ridge", None, train_raw, FAST, cap=40)
-    test_raw = degrading_fleet(5, seed=1, truncate=True)
-    true_rul = pd.Series(np.arange(10, 15), index=pd.RangeIndex(1, 6, name="unit"), name="rul")
+    test_raw, true_rul = truncated_fleet(5)
     result = evaluate_on_test(pipeline, test_raw, true_rul)
     assert {"test_rmse", "test_mae", "test_nasa", "test_alert_recall"} <= set(result)
     assert result["test_rmse"] >= 0

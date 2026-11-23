@@ -32,6 +32,8 @@ notebooks = [
 # Training-only tools, kept out of the serving image
 train = [
     "optuna>=4.0",
+    "mlflow>=3.18",
+    "matplotlib>=3.9",
 ]
 
 [tool.uv]
