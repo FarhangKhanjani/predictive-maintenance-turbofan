@@ -14,7 +14,7 @@ Command line:
     uv run rul-train ablate             # feature, cap, and window ablations
     uv run rul-train promote            # register best benchmark run as @champion
 
-Runs are logged to MLflow unless `--no-track` is given (see rul.tracking).
+Runs are logged to MLflow unless ``--no-track`` is given (see rul.tracking).
 """
 
 from __future__ import annotations

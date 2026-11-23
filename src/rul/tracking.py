@@ -87,7 +87,11 @@ def configure(subset: str, tracking_uri: str | None = None) -> str:
 
 
 def git_info() -> dict[str, str]:
-    """Current commit hash and whether uncommitted changes exist ("unknown" outside git)."""
+    """Current commit hash and whether uncommitted changes exist ("unknown" outside git).
+
+    Generated results under ``reports/`` do not count as changes: one command
+    rewriting its JSON output must not mark the next command's runs as dirty.
+    """
 
     def run(*args: str) -> str:
         out = subprocess.run(
@@ -98,7 +102,7 @@ def git_info() -> dict[str, str]:
     try:
         return {
             "git_commit": run("rev-parse", "HEAD"),
-            "git_dirty": str(bool(run("status", "--porcelain"))),
+            "git_dirty": str(bool(run("status", "--porcelain", "--", ".", ":!reports"))),
         }
     except (OSError, subprocess.CalledProcessError):
         return {"git_commit": "unknown", "git_dirty": "unknown"}
@@ -265,6 +269,18 @@ def latest_benchmark_runs(subset: str) -> pd.DataFrame:
     return children
 
 
+def logged_model_uri(run_id: str, experiment_id: str) -> str:
+    """``models:/m-...`` URI of the model a run logged (MLflow 3 logged models)."""
+    models = mlflow.search_logged_models(
+        experiment_ids=[experiment_id],
+        filter_string=f"source_run_id = '{run_id}'",
+        output_format="list",
+    )
+    if not models:
+        raise LookupError(f"run {run_id} did not log a model")
+    return models[0].model_uri
+
+
 def promote(subset: str) -> dict[str, str]:
     """Register the best two benchmark runs and point the aliases at them.
 
@@ -283,7 +299,7 @@ def promote(subset: str) -> dict[str, str]:
     promoted: dict[str, str] = {}
     for alias, (_, run) in zip(("champion", "challenger"), runs.head(2).iterrows(), strict=False):
         version = mlflow.register_model(
-            f"runs:/{run['run_id']}/model",
+            logged_model_uri(run["run_id"], run["experiment_id"]),
             name,
             tags={
                 "label": run["tags.label"],
