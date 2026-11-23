@@ -16,7 +16,8 @@
     "test_alert_recall":0.0,
     "test_alerts_raised":0,
     "test_engines_needing_alert":25,
-    "n_features":281
+    "n_features":281,
+    "run_id":"001be7ef539e4f0c83c994437734c35d"
   },
   {
     "experiment":"Ridge",
@@ -26,7 +27,7 @@
     "cv_nasa_mean":4.1234319769,
     "cv_rmse_late":16.8423453983,
     "cv_rmse_std":0.6761926484,
-    "cv_seconds":0.7,
+    "cv_seconds":1.6,
     "test_rmse":18.1239316352,
     "test_mae":15.1056352043,
     "test_nasa":464.1096512075,
@@ -35,7 +36,8 @@
     "test_alert_recall":0.56,
     "test_alerts_raised":14,
     "test_engines_needing_alert":25,
-    "n_features":281
+    "n_features":281,
+    "run_id":"95304454faac418a9a67e5397f38020d"
   },
   {
     "experiment":"Random forest",
@@ -45,7 +47,7 @@
     "cv_nasa_mean":3.2633300745,
     "cv_rmse_late":14.6414364827,
     "cv_rmse_std":1.2140093084,
-    "cv_seconds":197.6,
+    "cv_seconds":232.0,
     "test_rmse":14.0063717501,
     "test_mae":10.345969233,
     "test_nasa":282.2379412996,
@@ -54,7 +56,8 @@
     "test_alert_recall":0.76,
     "test_alerts_raised":20,
     "test_engines_needing_alert":25,
-    "n_features":281
+    "n_features":281,
+    "run_id":"7e0ab56144bc43c8b93693b7cb864a7a"
   },
   {
     "experiment":"XGBoost (default)",
@@ -64,7 +67,7 @@
     "cv_nasa_mean":2.7295294953,
     "cv_rmse_late":13.6716266219,
     "cv_rmse_std":0.6739878892,
-    "cv_seconds":45.8,
+    "cv_seconds":90.5,
     "test_rmse":13.0805567232,
     "test_mae":9.2853635788,
     "test_nasa":248.1355005222,
@@ -73,7 +76,8 @@
     "test_alert_recall":0.88,
     "test_alerts_raised":23,
     "test_engines_needing_alert":25,
-    "n_features":281
+    "n_features":281,
+    "run_id":"fd927c5bbc7540eebc0778fe9bc2c48b"
   },
   {
     "experiment":"XGBoost (tuned)",
@@ -83,7 +87,7 @@
     "cv_nasa_mean":2.6143851411,
     "cv_rmse_late":13.4727319515,
     "cv_rmse_std":0.8740004093,
-    "cv_seconds":114.9,
+    "cv_seconds":168.9,
     "test_rmse":13.3304599645,
     "test_mae":9.5283652306,
     "test_nasa":268.9951200992,
@@ -92,6 +96,7 @@
     "test_alert_recall":0.88,
     "test_alerts_raised":24,
     "test_engines_needing_alert":25,
-    "n_features":281
+    "n_features":281,
+    "run_id":"4c41abdb6e9b48c18fbfdcd7199251b5"
   }
 ]

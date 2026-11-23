@@ -1,8 +1,9 @@
 # Experiments (FD001)
 
-All numbers come from `uv run rul-train tune|benchmark|ablate` and are stored in
-`reports/*.json` (`reports/tuning_trials.csv` holds every tuning trial). MLflow
-tracking replaces these files as the system of record in Milestone 5.
+All numbers come from `uv run rul-train tune|benchmark|ablate`. MLflow is the system of
+record (see [Tracking and model registry](#tracking-and-model-registry-mlflow)); the same
+results are also written to `reports/*.json` (with MLflow run ids) so they can be read on
+GitHub without a tracking server. `reports/tuning_trials.csv` holds every tuning trial.
 
 ## Protocol
 
@@ -99,3 +100,65 @@ What the ablations show:
   maintenance decision would want an interval (for example quantile regression),
   which is out of scope for this project.
 - **The tuning budget was small** (30 trials, narrowed space) because of laptop CPU time.
+
+## Tracking and model registry (MLflow)
+
+Every command logs to MLflow. By default the tracking store is a local SQLite
+file (`mlflow.db`) with artifacts in `mlartifacts/`; both are gitignored.
+Setting `MLFLOW_TRACKING_URI` points the same code at a tracking server
+instead (the Docker setup in Milestone 7 uses a server backed by Postgres).
+
+```bash
+uv run rul-train log-tuning   # record the finished Optuna study (tune does this itself)
+uv run rul-train benchmark    # one parent run, one child run per model
+uv run rul-train ablate       # one parent run, one child run per variant
+uv run rul-train promote      # move the @champion and @challenger aliases
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db   # browse at http://localhost:5000
+```
+
+`--no-track` skips MLflow for quick local experiments.
+
+### What every run records
+
+| Kind | Content |
+|---|---|
+| Params | model name and all hyperparameters (defaults merged in), feature config (`features.*`), RUL cap, seed, number of folds, subset |
+| Metrics | all CV metrics (`cv_rmse`, `cv_rmse_late`, `cv_mae`, `cv_nasa_mean`, `cv_rmse_std`) and test metrics (`test_rmse`, `test_nasa`, alert precision and recall) |
+| Tags | `git_commit`, `git_dirty`, `data_sha256` (combined checksum of the train, test and RUL files), `kind`, `subset`, `label` |
+| Artifacts | the fitted pipeline (feature step plus model) with signature and input example, `feature_config.json`, `plots/test_predictions.png`, `plots/feature_importance.png` for tree models |
+
+The logged model is the whole pipeline, so its input is raw C-MAPSS rows
+(`unit`, `cycle`, `op1` to `op3`, `s1` to `s21`) and its output is one RUL per
+row. That is the same contract the API in Milestone 6 will use.
+
+To reproduce a run: check out its `git_commit`, verify the data with
+`uv run rul-data verify` (the checksum must match `data_sha256`), and rerun the
+command. Rerunning the benchmark and ablations under MLflow reproduced the
+M4 numbers exactly.
+
+### Promotion
+
+`rul-train promote` reads the most recent benchmark from the tracking store,
+registers its best two runs in the model `turbofan-rul-fd001`, and sets the aliases:
+
+| Alias | Version | Run | CV RMSE |
+|---|---|---|---|
+| `champion` | 1 | XGBoost (tuned) | 12.141 |
+| `challenger` | 2 | XGBoost (default) | 12.497 |
+
+The rule is "lowest `cv_rmse` in the latest benchmark", and it is stored as a tag
+on every registered version. The test set plays no part. Serving code loads
+`models:/turbofan-rul-fd001@champion` and never refers to a version number, so
+rolling back means moving one alias. Aliases replace the older Staging and
+Production stages, which MLflow has deprecated.
+
+### Tracking limitations
+
+- The model is serialized with cloudpickle. Loading a pickle runs code, so only
+  load models from a registry you control. Loading also needs the `rul` package
+  installed in a compatible version, because the pipeline contains `RULFeatures`.
+- SQLite is fine for one person on one machine. Concurrent writers need the
+  server setup.
+- Promotion is automatic and metric-based. In a real deployment a person would
+  review the challenger (plots, alert recall, the late-error side) before
+  moving the champion alias.
